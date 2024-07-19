@@ -1,73 +1,69 @@
-chrome.storage.local.get(['screenTimeData'], (result) => {
-  if (result.screenTimeData) {
-    Object.assign(screenTimeData, result.screenTimeData);
-  }
-});
+// chrome.storage.local.get(['screenTimeData'], (result) => {
+//   if (result.screenTimeData) {
+//     Object.assign(screenTimeData, result.screenTimeData);
+//   }
+// });
 
-
+let currentTabId = null;
+let lastActiveTime = Date.now();
 const screenTimeData = {};
-let activeTabId = null;
-let activeTabStartTime = null;
 
-function saveScreenTimeData() {
-  chrome.storage.local.set({ screenTimeData });
-}
+// Update screen time when tab is activated
+chrome.tabs.onActivated.addListener(activeInfo => {
+  const { tabId } = activeInfo;
 
-function updateActiveTab(tabId) {
-  if (activeTabId !== null && activeTabStartTime !== null) {
-    const now = Date.now();
-    const elapsedTime = now - activeTabStartTime;
-
-    if (!screenTimeData[activeTabId]) {
-      screenTimeData[activeTabId] = 0;
+  if (currentTabId !== null) {
+    const currentTime = Date.now();
+    if (!screenTimeData[currentTabId]) {
+      screenTimeData[currentTabId] = { time: 0, title: '' };
     }
-    screenTimeData[activeTabId] += elapsedTime;
-    saveScreenTimeData();
+    screenTimeData[currentTabId].time += currentTime - lastActiveTime;
   }
 
-  activeTabId = tabId;
-  activeTabStartTime = Date.now();
-}
+  currentTabId = tabId;
+  lastActiveTime = Date.now();
 
-chrome.tabs.onActivated.addListener((activeInfo) => {
-  updateActiveTab(activeInfo.tabId);
+  chrome.tabs.get(tabId, (tab) => {
+    const { title } = tab;
+    if (!screenTimeData[tabId]) {
+      screenTimeData[tabId] = { time: 0, title };
+    } else {
+      screenTimeData[tabId].title = title;
+    }
+  });
+
+  chrome.storage.local.set({ screenTimeData });
 });
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (tabId === activeTabId && changeInfo.status === 'complete') {
-    updateActiveTab(tabId);
-  }
+// Remove data when tab is closed
+chrome.tabs.onRemoved.addListener(tabId => {
+  delete screenTimeData[tabId];
+  chrome.storage.local.set({ screenTimeData });
 });
 
-chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
-  if (tabId === activeTabId) {
-    updateActiveTab(null);
-  }
-});
-
-chrome.windows.onFocusChanged.addListener((windowId) => {
-  if (windowId === chrome.windows.WINDOW_ID_NONE) {
-    updateActiveTab(null);
+// Update screen time when idle state changes
+chrome.idle.onStateChanged.addListener(newState => {
+  const currentTime = Date.now();
+  if (newState === 'active') {
+    if (currentTabId !== null && screenTimeData[currentTabId]) {
+      screenTimeData[currentTabId].time += currentTime - lastActiveTime;
+    }
+    lastActiveTime = currentTime;
   } else {
-    chrome.tabs.query({ active: true, windowId }, (tabs) => {
-      if (tabs.length > 0) {
-        updateActiveTab(tabs[0].id);
-      }
-    });
+    if (currentTabId !== null && screenTimeData[currentTabId]) {
+      screenTimeData[currentTabId].time += currentTime - lastActiveTime;
+      lastActiveTime = currentTime;
+    }
   }
+  chrome.storage.local.set({ screenTimeData });
 });
 
-// Blink reminder functionality
-chrome.alarms.create('blinkReminder', { periodInMinutes: 5 });
+chrome.runtime.onStartup.addListener(() => {
+  currentTabId = null;
+  lastActiveTime = Date.now();
+});
 
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'blinkReminder') {
-    chrome.notifications.create('blinkReminder', {
-      type: 'basic',
-      iconUrl: 'icons/icon48.png',
-      title: 'Blink Reminder',
-      message: 'Time to blink!',
-      priority: 2
-    });
-  }
+chrome.runtime.onInstalled.addListener(() => {
+  currentTabId = null;
+  lastActiveTime = Date.now();
 });
